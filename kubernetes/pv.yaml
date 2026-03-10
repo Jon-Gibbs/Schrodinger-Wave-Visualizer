@@ -15,7 +15,7 @@ spec:
   storageClassName: ""
   # AWS EBS volume - update volumeID with your actual EBS volume ID
   awsElasticBlockStore:
-    volumeID: vol-0bbf7d3ebb9b2faa3
+    volumeID: vol-003a6b9af62c56a19
     fsType: ext4
   
   # Pod eviction policy

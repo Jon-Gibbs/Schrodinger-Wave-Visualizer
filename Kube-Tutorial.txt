@@ -1,0 +1,344 @@
+================================================================================
+KUBERNETES EKS DEPLOYMENT TUTORIAL
+Schrödinger Application with Indexed Job and Persistent Storage
+================================================================================
+
+SECTION 1: WHAT EACH YAML FILE DOES
+================================================================================
+
+1. pv.yaml (Persistent Volume)
+   - Creates the actual storage resource in your EKS cluster
+   - Allocates capacity and defines storage characteristics
+   - Acts as the backend storage pool that your pods will use
+   - Think of it as the physical hard drive being carved out
+   - Must be created BEFORE the PVC
+
+2. pvc.yaml (Persistent Volume Claim)
+   - Makes a request for storage from the available PVs
+   - Pod-friendly abstraction layer
+   - Binds to a PV and reserves storage for your Job
+   - Think of it as a lease/contract on the physical storage
+   - Must be created AFTER the PV is available, BEFORE Job creation
+
+3. indexed-job.yaml (Kubernetes Job)
+   - Defines your parallel workload
+   - Creates 10 indexed worker pods (0-9) running simultaneously (5 at a time)
+   - Each pod runs your Fortran application from ECR
+   - Pulls the Docker image from AWS ECR
+   - Mounts the PVC to write results to /app/results
+   - Passes JOB_COMPLETION_INDEX to each pod so they know which chunk to process
+   - Creates/destroys pods automatically based on completions
+
+================================================================================
+SECTION 2: HOW TO SPIN UP THE PODS
+================================================================================
+
+PREREQUISITE: Ensure your kubeconfig is set to the correct cluster
+   $ kubectl config current-context
+   # Should show your EKS cluster name (e.g., arn:aws:eks:us-west-2:...)
+
+STEP 1: Apply the Persistent Volume
+   $ kubectl apply -f kubernetes/pv.yaml
+   
+   Verify it was created:
+   $ kubectl get pv
+   # Look for "schrodinger-pv" in the list with "Available" status
+
+STEP 2: Apply the Persistent Volume Claim
+   $ kubectl apply -f kubernetes/pvc.yaml
+   
+   Verify it was created and bound:
+   $ kubectl get pvc
+   # Look for "schrodinger-pvc" with status "Bound" and your PV name listed
+
+STEP 3: Apply the Indexed Job
+   $ kubectl apply -f kubernetes/indexed-job.yaml
+   
+   Verify the Job was created:
+   $ kubectl get jobs
+   # Should show "schrodinger-indexed-job" with 0/10 completions initially
+
+STEP 4: Monitor pod creation
+   $ kubectl get pods -w
+   # Watch as pods are created and start running
+   # Press Ctrl+C to exit watch mode
+   # You should see pods named: schrodinger-indexed-job-0, schrodinger-indexed-job-1, etc.
+
+STEP 5: Monitor job progress
+   $ kubectl get jobs -w
+   # Watch the completions increase (e.g., 3/10, 5/10, 10/10)
+   # Job is complete when COMPLETIONS shows 10/10
+
+================================================================================
+SECTION 3: HOW TO DIAGNOSE ISSUES WITH PODS (CLI ONLY)
+================================================================================
+
+CHECKING JOB STATUS
+   $ kubectl describe job schrodinger-indexed-job
+   # Shows detailed job info, conditions, and events
+   # Look for warnings or error messages at the bottom
+
+CHECKING INDIVIDUAL POD STATUS
+   $ kubectl get pods
+   # Lists all pods with their status
+   # Pod statuses: Pending, Running, Succeeded, Failed, CrashLoopBackOff
+   
+   $ kubectl describe pod <pod-name>
+   # Example: kubectl describe pod schrodinger-indexed-job-0
+   # Shows detailed info: node assignment, resource requests, events
+   # Last few lines often contain the root cause of failures
+
+VIEWING POD LOGS
+   $ kubectl logs <pod-name>
+   # View stdout/stderr output from the container
+   # Example: kubectl logs schrodinger-indexed-job-0
+   
+   $ kubectl logs <pod-name> --previous
+   # View logs from a crashed pod's previous run
+   # Useful when a pod is in CrashLoopBackOff status
+
+VIEWING STREAMING LOGS (REAL-TIME)
+   $ kubectl logs -f <pod-name>
+   # Follows log output in real-time
+   # Press Ctrl+C to stop
+
+CHECKING PERSISTENT VOLUME/CLAIM STATUS
+   $ kubectl get pv
+   # Check PV status (should be Bound)
+   
+   $ kubectl get pvc
+   # Check PVC status (should be Bound)
+   
+   $ kubectl describe pvc schrodinger-pvc
+   # Shows PVC details and mount information
+
+GETTING POD EVENTS
+   $ kubectl get events --sort-by='.lastTimestamp'
+   # Shows all cluster events, useful for debugging
+   # Most recent events are at the bottom
+
+CHECKING NODE RESOURCES
+   $ kubectl top nodes
+   # Shows CPU and memory usage on each node
+   # Helpful if pods are in Pending state (may mean insufficient resources)
+   
+   $ kubectl describe node <node-name>
+   # Shows detailed node info, including allocatable resources and pod list
+
+COMMON ISSUES AND QUICK FIXES:
+
+Issue: Pods stuck in "Pending"
+   → Check node resources: kubectl top nodes
+   → Check PVC status: kubectl get pvc
+   → Not enough resources? Scale down parallelism in indexed-job.yaml
+
+Issue: Pods in "CrashLoopBackOff"
+   → View logs: kubectl logs <pod-name> --previous
+   → Check if image exists: kubectl describe pod <pod-name> | grep -i image
+   → Verify ECR credentials are configured
+
+Issue: Job not progressing
+   → Check job details: kubectl describe job schrodinger-indexed-job
+   → Check pod individually: kubectl describe pod <pod-name>
+   → View logs for errors: kubectl logs <pod-name>
+
+================================================================================
+SECTION 4: HOW TO VERIFY YOUR NODES WORK
+================================================================================
+
+CHECK NODE STATUS
+   $ kubectl get nodes
+   # Should show all nodes with status "Ready"
+   # Format: NAME, STATUS, ROLES, VERSION, etc.
+
+CHECK NODE DETAILS
+   $ kubectl get nodes -o wide
+   # Shows additional info: INTERNAL-IP, EXTERNAL-IP, OS-IMAGE, KERNEL-VERSION
+   # Verify all nodes are in "Ready" state
+
+CHECK NODE CAPACITY AND ALLOCATION
+   $ kubectl top nodes
+   # Shows current CPU and memory usage per node
+   # Compare to node capacity: kubectl describe node <node-name>
+
+VERIFY NODE CAN RUN PODS
+   $ kubectl get pods -o wide
+   # Shows which nodes each pod is running on
+   # After Job creation, should see pods distributed across available nodes
+
+VERIFY NETWORK CONNECTIVITY
+   $ kubectl run -i --tty --rm debug --image=busybox --restart=Never -- sh
+   # Launches a test pod with shell access
+   # From inside: ping <pod-ip> to test connectivity
+   # Type 'exit' to delete the test pod
+
+CHECK NODE READINESS CONDITIONS
+   $ kubectl describe node <node-name>
+   # Look for "Conditions:" section
+   # All conditions should show "True" or appropriate status
+   # Watch for "MemoryPressure", "DiskPressure", "PIDPressure" set to False
+
+VERIFY EBS CSI DRIVER (FOR STORAGE)
+   $ kubectl get pods -n kube-system | grep ebs-csi
+   # Should show ebs-csi-controller and ebs-csi-node pods running
+   # If not running, the driver add-on may not be properly installed
+
+CHECK NODE LABELS AND TAINTS
+   $ kubectl get nodes --show-labels
+   # Shows node labels used for pod scheduling
+   
+   $ kubectl describe node <node-name> | grep -i taints
+   # Shows any taints that might prevent pod scheduling
+   # Your Job has toleration for "CriticalAddonsOnly" taint
+
+================================================================================
+SECTION 5: VERIFICATION AND TESTING CHECKLIST
+================================================================================
+
+PRE-DEPLOYMENT CHECKLIST:
+   ☐ EKS cluster created and kubeconfig configured
+   ☐ kubectl can connect: kubectl cluster-info
+   ☐ EBS CSI driver add-on installed
+   ☐ ECR image exists and is accessible from cluster
+   ☐ All 3 YAML files are valid (no syntax errors)
+
+DEPLOYMENT CHECKLIST:
+   ☐ PV created successfully (kubectl get pv)
+   ☐ PVC created and bound (kubectl get pvc)
+   ☐ Job created successfully (kubectl get jobs)
+   ☐ Pods are starting to spawn (kubectl get pods)
+   ☐ All nodes are in "Ready" state (kubectl get nodes)
+
+RUNTIME CHECKLIST:
+   ☐ Pods are transitioning through Running → Succeeded
+   ☐ Job completion counter increasing (kubectl get jobs)
+   ☐ No crashes or errors in logs (kubectl logs <pod>)
+   ☐ Storage is being written to (files appear in mounted volume)
+   ☐ All 10 pods complete successfully
+
+POST-DEPLOYMENT:
+   ☐ Check results: kubectl exec <pod> -- ls /app/results
+   ☐ Retrieve results from PV
+   ☐ Clean up: kubectl delete job schrodinger-indexed-job
+   ☐ Retain PVC/PV if results are needed long-term
+
+================================================================================
+SECTION 6: USEFUL KUBECTL COMMANDS REFERENCE
+================================================================================
+
+CLUSTER INFO:
+   kubectl cluster-info              # Display cluster info
+   kubectl get nodes                 # List all nodes
+   kubectl get pods                  # List all pods
+   kubectl get services              # List all services
+   kubectl get pv                    # List persistent volumes
+   kubectl get pvc                   # List persistent volume claims
+
+DETAILED INFORMATION:
+   kubectl describe <resource> <name>        # Detailed info on a resource
+   kubectl logs <pod-name>                   # View pod logs
+   kubectl exec -it <pod> -- <command>       # Run command in pod
+   kubectl get <resource> -o yaml            # Output as YAML
+
+MONITORING:
+   kubectl get <resource> -w                 # Watch resource changes
+   kubectl top nodes                         # Node resource usage
+   kubectl top pods                          # Pod resource usage
+   kubectl get events --sort-by='.lastTimestamp'  # Cluster events
+
+CLEANUP:
+   kubectl delete job <job-name>             # Delete a job (and its pods)
+   kubectl delete pvc <pvc-name>             # Delete persistent volume claim
+   kubectl delete pv <pv-name>               # Delete persistent volume
+
+CONFIG & CONTEXT:
+   kubectl config current-context            # Show current cluster
+   kubectl config get-contexts               # List available clusters
+   kubectl config use-context <context>      # Switch cluster
+
+================================================================================
+SECTION 7: EXPECTED BEHAVIOR AND TIMELINE
+================================================================================
+
+IMMEDIATE (0-10 seconds):
+   - Job is created
+   - Job controller recognizes 10 completions needed
+   - PVC is mounted and ready
+
+SHORT TERM (10-60 seconds):
+   - First pods spawn (indices 0-4 based on parallelism=5)
+   - Pods pull Docker image from ECR
+   - Container starts and python script begins execution
+   - You should see pod status: Pending → ContainerCreating → Running
+
+MEDIUM TERM (depends on computation):
+   - Pods execute parallel_worker.py
+   - Each pod processes its assigned chunk (based on JOB_COMPLETION_INDEX)
+   - Results are written to /app/results on the PVC
+   - As pods complete, next batch spawns (e.g., indices 5-9)
+
+COMPLETION (depends on workload):
+   - All 10 pods reach Succeeded status
+   - Job COMPLETIONS shows 10/10
+   - Job status shows "Complete"
+   - Pods are retained (if ttlSecondsAfterFinished allows), then cleaned up
+
+STORAGE PERSISTENCE:
+   - Results remain on PV even after pods are deleted
+   - PVC keeps the PV bound until explicitly deleted
+   - You can access results via kubectl exec or by mounting volume elsewhere
+
+================================================================================
+SECTION 8: TROUBLESHOOTING CHECKLIST
+================================================================================
+
+Problem: Cluster not accessible
+   Fix: kubectl config use-context <your-cluster-name>
+        aws eks update-kubeconfig --name <cluster> --region us-west-2
+
+Problem: Pods won't start
+   Fix: Check nodes are ready: kubectl get nodes
+        Check PVC is bound: kubectl get pvc
+        View pod events: kubectl describe pod <name>
+
+Problem: Image pull failures
+   Fix: Verify image exists in ECR
+        Verify cluster has ECR pull credentials
+        Check image URI in indexed-job.yaml matches ECR
+
+Problem: Storage not working
+   Fix: Verify PV and PVC created: kubectl get pv && kubectl get pvc
+        Check EBS CSI driver: kubectl get pods -n kube-system | grep ebs-csi
+        Verify EBS volume exists in AWS console
+
+Problem: Jobs not progressing
+   Fix: View logs: kubectl logs <pod-name>
+        Check for resource limitations: kubectl top nodes
+        Verify node capacity: kubectl describe node <node>
+
+Problem: Results not being saved
+   Fix: Verify pod can write: kubectl exec <pod> -- ls /app/results
+        Check PVC mount: kubectl describe pod <pod> | grep -A5 Mounts
+        Verify storage has space: kubectl describe pvc <pvc>
+
+================================================================================
+QUICK START REFERENCE
+================================================================================
+
+To deploy everything at once:
+   $ kubectl apply -f kubernetes/pv.yaml && \
+     kubectl apply -f kubernetes/pvc.yaml && \
+     kubectl apply -f kubernetes/indexed-job.yaml
+
+To monitor everything:
+   $ kubectl get pods -w &
+   $ kubectl get jobs -w
+
+To cleanup:
+   $ kubectl delete job schrodinger-indexed-job
+   $ kubectl delete pvc schrodinger-pvc
+   $ kubectl delete pv schrodinger-pv
+
+================================================================================
+END OF TUTORIAL
+================================================================================

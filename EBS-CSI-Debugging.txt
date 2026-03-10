@@ -1,0 +1,332 @@
+================================================================================
+EBS CSI DRIVER ATTACHMENT DEBUGGING GUIDE
+Step-by-Step Methodology to Diagnose Volume Attachment Failures
+================================================================================
+
+CONTEXT:
+If your Kubernetes pods are stuck in "ContainerCreating" or "Pending" state with
+a warning like "AttachVolume.Attach failed for volume ... timed out waiting for
+external-attacher of ebs.csi.aws.com CSI driver", follow this systematic guide.
+
+================================================================================
+STEP 1: VERIFY EBS CSI DRIVER IS INSTALLED AND RUNNING
+================================================================================
+
+Check if the EBS CSI driver pod is deployed:
+
+   $ kubectl get pods -n kube-system | grep ebs-csi
+
+Expected output should show:
+   - ebs-csi-controller-* (should be Running)
+   - ebs-csi-node-* (should be Running on each node)
+
+If you see no output:
+   The driver isn't installed. You need to first run:
+   $ aws eks create-addon --cluster-name schrodinger --addon-name aws-ebs-csi-driver
+
+If pods exist but are NOT in "Running" state:
+   Check their detailed status:
+   $ kubectl describe pod -n kube-system -l app=ebs-csi-controller
+   $ kubectl describe pod -n kube-system -l app=ebs-csi-node
+
+TROUBLESHOOT: If pods won't start, check Step 2 for logs revealing permission issues.
+
+================================================================================
+STEP 2: CHECK EBS CSI CONTROLLER LOGS FOR ERRORS
+================================================================================
+
+View the EBS CSI controller logs to see if there are permission or API errors:
+
+   $ kubectl logs -n kube-system -l app=ebs-csi-controller -c ebs-plugin --tail=100
+
+Also check the node plugin logs:
+
+   $ kubectl logs -n kube-system -l app=ebs-csi-node -c ebs-plugin --tail=100
+
+Look for:
+   - Permission denied errors (IAM role issue → go to Step 3)
+   - "AccessDenied" from AWS API (IAM role issue → go to Step 3)
+   - "VolumeNotFound" or "InvalidVolume.NotFound" (volume doesn't exist → verify volume ID)
+   - "InvalidParameterValue" (malformed request, usually AZ mismatch → go to Step 4)
+   - "UnauthorizedOperation" (missing IAM permissions → go to Step 3)
+
+DETAILED POD LOGS:
+
+   $ kubectl describe pod -n kube-system -l app=ebs-csi-controller
+   # Look at the bottom "Events" section for startup failures
+   
+   $ kubectl describe pod -n kube-system -l app=ebs-csi-node
+   # Same, check Events for any error messages
+
+================================================================================
+STEP 3: VERIFY IAM ROLE HAS CORRECT PERMISSIONS
+================================================================================
+
+The EBS CSI driver needs an IAM role with EBS permissions. Check if it exists:
+
+   $ aws iam list-roles | grep -i ebs
+
+Look for "AmazonEKS_EBS_CSI_DriverRole" in the output.
+
+If it doesn't exist:
+   You need to create it. Re-run the addon creation with explicit role:
+   $ aws eks create-addon --cluster-name schrodinger \
+     --addon-name aws-ebs-csi-driver \
+     --service-account-role-arn arn:aws:iam::037710112625:role/AmazonEKS_EBS_CSI_DriverRole
+
+If it exists, verify it has the right permissions:
+
+   $ aws iam list-role-policies --role-name AmazonEKS_EBS_CSI_DriverRole
+
+This should output at least one policy name (e.g., "AmazonEKS_EBS_CSI_Driver_Policy").
+
+View the actual policy:
+
+   $ aws iam get-role-policy --role-name AmazonEKS_EBS_CSI_DriverRole \
+     --policy-name AmazonEKS_EBS_CSI_Driver_Policy
+
+The policy should include these EC2 actions:
+   - ec2:AttachVolume
+   - ec2:DetachVolume
+   - ec2:DescribeVolumes
+   - ec2:DescribeVolumeStatus
+   - ec2:CreateTags
+   - ec2:DeleteTags
+
+If permissions are missing:
+   Update the policy or create a new one with the required permissions.
+
+VERIFY SERVICE ACCOUNT ANNOTATION:
+
+   $ kubectl describe sa -n kube-system ebs-csi-controller-sa
+   $ kubectl describe sa -n kube-system ebs-csi-node-sa
+
+Look for an annotation like:
+   eks.amazonaws.com/role-arn: arn:aws:iam::037710112625:role/AmazonEKS_EBS_CSI_DriverRole
+
+If missing, the IRSA (IAM Roles for Service Accounts) isn't configured correctly.
+
+================================================================================
+STEP 4: VERIFY EBS VOLUME EXISTS AND IS IN THE CORRECT AZ
+================================================================================
+
+Check that your EBS volume exists and is available:
+
+   $ aws ec2 describe-volumes --volume-ids vol-003a6b9af62c56a19 --region us-west-2
+
+Required conditions:
+   1. Volume must exist (won't return error)
+   2. "State" field must be "available" (not "in-use" or "deleted")
+   3. "AvailabilityZone" must match your EKS node's AZ
+
+Find your EKS node's AZ:
+
+   $ kubectl get nodes -o wide
+
+Look for the node where your pod is scheduled (from pod describe output).
+In the output, find the node and note its "AVAILABILITY-ZONE" (in the node labels).
+
+Example: If node shows "us-west-2a", your volume MUST be in "us-west-2a".
+
+Compare the two:
+
+   Volume AZ: (from aws ec2 describe-volumes)
+   Node AZ: (from kubectl get nodes -o wide or kubectl describe node)
+
+IF THEY DON'T MATCH:
+   This is likely your problem. EBS volumes can only attach to EC2 instances
+   in the same AZ. Solutions:
+   
+   Option A: Create a new EBS volume in the correct AZ
+      $ aws ec2 create-volume --size 80 --volume-type gp3 --region us-west-2 \
+        --availability-zone us-west-2a
+      Then update pv.yaml with the new volume ID.
+   
+   Option B: Scale your EKS cluster to include a node in the volume's AZ
+      This is more complex and depends on your node group configuration.
+   
+   Option C: Use EBS multi-AZ (EBS Multi-Attach) if your volume supports it
+      Advanced option; check AWS docs.
+
+================================================================================
+STEP 5: CHECK IF VOLUME IS ALREADY ATTACHED ELSEWHERE
+================================================================================
+
+Verify the volume isn't already in-use on another instance:
+
+   $ aws ec2 describe-volumes --volume-ids vol-003a6b9af62c56a19 --region us-west-2
+
+Look at the "Attachments" field in the output.
+
+If Attachments is empty []:
+   The volume is available and not attached. Good.
+
+If Attachments shows entries:
+   The volume is already attached to another instance. Look at:
+      - InstanceId: which EC2 instance it's attached to
+      - State: should be "attached" or "attaching"
+      - Device: the device name (e.g., /dev/sda1)
+
+SOLUTION:
+   Detach it from the old instance first:
+   $ aws ec2 detach-volume --volume-id vol-003a6b9af62c56a19 --region us-west-2
+   
+   Wait for it to detach (may take 30 seconds):
+   $ aws ec2 describe-volumes --volume-ids vol-003a6b9af62c56a19 --region us-west-2
+   # Attachments should be empty
+   
+   Then try the Kubernetes deployment again:
+   $ kubectl delete pod <pod-name>
+   # Pod will be recreated and should try to attach the volume
+
+================================================================================
+STEP 6: CHECK PVC STATUS FOR ATTACHMENT ERRORS
+================================================================================
+
+Get more detailed information about the PVC:
+
+   $ kubectl describe pvc schrodinger-pvc
+
+Look at the "Events" section at the bottom. Common messages:
+
+   - "Failed for volume ... AttachVolume.Attach failed"
+     → Driver couldn't attach. Check Steps 2-5.
+   
+   - "Timed out waiting for external-attacher of ebs.csi.aws.com CSI driver"
+     → Driver never responded. Check if ebs-csi-controller is running (Step 1).
+   
+   - "InvalidVolume.Malformed"
+     → Volume ID format is wrong. Verify in pv.yaml.
+   
+   - "InvalidParameterValue"
+     → AZ mismatch (Step 4) or security group issue (Step 8).
+
+Also check the PVC's phase:
+   - "Bound" = successfully attached
+   - "Pending" = waiting for attachment
+
+If Pending for >2 minutes with no recent events:
+   → Likely a permissions or AZ issue (Steps 3-4)
+
+================================================================================
+STEP 7: CHECK EBS CSI NODE PLUGIN LOGS ON SPECIFIC NODE
+================================================================================
+
+Your pod is running on node: i-0ee32e6dd33ce6eeb
+
+Get the corresponding Kubernetes node name:
+
+   $ kubectl get nodes -o wide | grep i-0ee32e6dd33ce6eeb
+
+Extract the node name (usually looks like "ip-*.compute.internal" or "i-*").
+
+Check EBS CSI node plugin logs:
+
+   $ kubectl logs -n kube-system -l app=ebs-csi-node --tail=200
+
+Or target the specific node:
+
+   $ kubectl get pods -n kube-system -l app=ebs-csi-node -o wide | grep <node-name>
+   $ kubectl logs -n kube-system <pod-name> -c ebs-plugin --tail=200
+
+Look for:
+   - Device attach failures
+   - File system mount errors
+   - iSCSI connection errors
+   - Permission denied errors
+
+================================================================================
+STEP 8: VERIFY SECURITY GROUP ALLOWS STORAGE TRAFFIC
+================================================================================
+
+This is less common but worth checking if Steps 1-7 don't reveal the issue.
+
+Find your EKS node's security group:
+
+   $ aws ec2 describe-instances --instance-ids i-0ee32e6dd33ce6eeb --region us-west-2
+
+Look for "SecurityGroups" in the output. Note the security group ID (sg-*).
+
+Check the security group's inbound rules:
+
+   $ aws ec2 describe-security-groups --group-ids sg-XXXXX --region us-west-2
+
+Look for rules allowing:
+   - iSCSI traffic (port 3260)
+   - Any traffic within the security group (for kubelet communication)
+
+If missing, add an inbound rule allowing iSCSI from the node to itself:
+
+   $ aws ec2 authorize-security-group-ingress --group-id sg-XXXXX \
+     --protocol tcp --port 3260 --source-group sg-XXXXX --region us-west-2
+
+This is uncommon; start with Steps 1-7 first.
+
+================================================================================
+SYSTEMATIC DEBUGGING FLOW
+================================================================================
+
+1. EBS CSI driver installed and running?
+   → YES: Go to 2
+   → NO: Install the driver add-on
+
+2. Any errors in controller/node logs?
+   → YES: IAM permission error? Go to 3 | AWS API error? Go to 4
+   → NO: Go to 4
+
+3. IAM role and permissions correct?
+   → YES: Go to 4
+   → NO: Create/update IAM role with correct permissions
+
+4. Volume exists and in correct AZ?
+   → YES: Go to 5
+   → NO: Create volume in correct AZ, update pv.yaml
+
+5. Volume already attached elsewhere?
+   → YES: Detach it, go to 6
+   → NO: Go to 6
+
+6. PVC shows any events?
+   → YES: Diagnose based on event message
+   → NO: Check node-specific logs (Step 7)
+
+7. Node plugin logs show errors?
+   → YES: Diagnose specific error
+   → NO: May be security group (Step 8)
+
+8. Security group allows storage traffic?
+   → YES: Issue should be resolved
+   → NO: Add iSCSI rule
+
+================================================================================
+COMMON SOLUTIONS QUICK REFERENCE
+================================================================================
+
+TIMEOUT WAITING FOR ATTACHER:
+   - Solution 1: Restart EBS CSI controller
+     $ kubectl rollout restart deployment -n kube-system ebs-csi-controller
+   
+   - Solution 2: Check controller logs for permission errors
+     $ kubectl logs -n kube-system -l app=ebs-csi-controller
+
+VOLUME NOT FOUND:
+   - Verify volume ID matches your pv.yaml exactly
+   - Check volume exists: aws ec2 describe-volumes --volume-ids <id>
+
+WRONG AVAILABILITY ZONE:
+   - Create new volume in correct AZ
+   - Update pv.yaml with new volume ID
+   - Delete and recreate PV: kubectl delete pv schrodinger-pv
+
+VOLUME ALREADY IN USE:
+   - Detach from other instance: aws ec2 detach-volume --volume-id <id>
+   - Wait 30 seconds for detach to complete
+   - Delete problematic pod: kubectl delete pod <pod-name>
+
+IAM PERMISSIONS MISSING:
+   - Update IAM role policy to include EBS actions
+   - Restart EBS CSI controller for changes to take effect
+
+================================================================================
+END OF DEBUGGING GUIDE
+================================================================================

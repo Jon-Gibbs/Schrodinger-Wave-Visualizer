@@ -9,8 +9,8 @@ spec:
   completions: 10
   
   # Number of pods that can run in parallel
-  # 5 pods will run at the same time, then the next 5 will start
-  parallelism: 5
+  # 1 pod will run at a time, then the next 1 will start
+  parallelism: 1
   
   # Time to wait before restarting a failed pod (in seconds)
   backoffLimit: 3
@@ -53,10 +53,10 @@ spec:
         # CPU and memory requests - adjust based on your Fortran workload
         resources:
           requests:
-            cpu: "500m"
+            cpu: "300m"
             memory: "512Mi"
           limits:
-            cpu: "1000m"
+            cpu: "600m"
             memory: "1Gi"
         
         # Mount the persistent volume for storing results
