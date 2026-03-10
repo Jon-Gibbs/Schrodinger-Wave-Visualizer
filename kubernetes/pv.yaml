@@ -13,11 +13,11 @@ spec:
     - ReadWriteOnce
   
   # StorageClass for dynamic provisioning (EBS on AWS)
-  storageClassName: gp2
+  storageClassName: gp3
   
   # AWS EBS volume - update volumeID with your actual EBS volume ID
   awsElasticBlockStore:
-    volumeID: vol-xxxxxxxxx  # Replace with your EBS volume ID
+    volumeID: vol-0bbf7d3ebb9b2faa3
     fsType: ext4
   
   # Pod eviction policy

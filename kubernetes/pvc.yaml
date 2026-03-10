@@ -5,7 +5,7 @@ metadata:
   namespace: default
 spec:
   # StorageClass must match the PV's storageClassName
-  storageClassName: gp2
+  storageClassName: gp3
   
   # Access modes must be compatible with the PV
   accessModes:
