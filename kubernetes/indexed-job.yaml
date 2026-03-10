@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: schrodinger-indexed-job
+  namespace: default
+spec:
+  # Number of successful pod completions needed to mark job complete
+  # This means 10 separate pods will run to completion (indexed 0-9)
+  completions: 10
+  
+  # Number of pods that can run in parallel
+  # 5 pods will run at the same time, then the next 5 will start
+  parallelism: 5
+  
+  # Time to wait before restarting a failed pod (in seconds)
+  backoffLimit: 3
+  
+  # Don't keep completed pods around after job finishes
+  ttlSecondsAfterFinished: 3600
+  
+  # IndexedJob template - each pod gets a unique index 0-9
+  completionMode: Indexed
+  
+  template:
+    metadata:
+      labels:
+        app: schrodinger-worker
+    spec:
+      # Don't restart pods on failure - let the job controller handle retries
+      restartPolicy: Never
+      
+      containers:
+      - name: schrodinger-worker
+        # Your ECR image URI
+        image: 037710112625.dkr.ecr.us-west-2.amazonaws.com/fortran-kubernetes:latest
+        imagePullPolicy: Always
+        
+        # Environment variables passed to parallel_worker.py
+        env:
+        # JOB_COMPLETION_INDEX is automatically set by Kubernetes (0-9)
+        # Your parallel_worker.py can read this to know which chunk to compute
+        - name: JOB_COMPLETION_INDEX
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+        
+        # CPU and memory requests - adjust based on your Fortran workload
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        
+        # Mount the persistent volume for storing results
+        volumeMounts:
+        - name: results-storage
+          mountPath: /app/results
+      
+      # Define the persistent volume claim to attach
+      volumes:
+      - name: results-storage
+        persistentVolumeClaim:
+          claimName: schrodinger-pvc
