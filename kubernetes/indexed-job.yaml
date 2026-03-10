@@ -29,6 +29,12 @@ spec:
       # Don't restart pods on failure - let the job controller handle retries
       restartPolicy: Never
       
+      # Tolerate the CriticalAddonsOnly taint on the node
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+      
       containers:
       - name: schrodinger-worker
         # Your ECR image URI
@@ -63,3 +69,4 @@ spec:
       - name: results-storage
         persistentVolumeClaim:
           claimName: schrodinger-pvc
+

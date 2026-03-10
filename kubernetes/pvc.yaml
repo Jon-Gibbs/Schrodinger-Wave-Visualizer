@@ -4,14 +4,11 @@ metadata:
   name: schrodinger-pvc
   namespace: default
 spec:
-  # StorageClass must match the PV's storageClassName
-  storageClassName: gp3
-  
   # Access modes must be compatible with the PV
   accessModes:
     - ReadWriteOnce
-  
-  # Request 10Gi (less than the 20Gi available in the PV)
+  storageClassName: ""
+  # Request 10Gi (less than the 80Gi available in the PV)
   resources:
     requests:
       storage: 10Gi

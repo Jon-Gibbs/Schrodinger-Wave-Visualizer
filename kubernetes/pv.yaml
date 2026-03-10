@@ -5,16 +5,14 @@ metadata:
 spec:
   # Storage capacity
   capacity:
-    storage: 20Gi
+    storage: 80Gi
   
   # Access modes define how the volume can be mounted
   # ReadWriteOnce - can be mounted by one pod at a time (good for EBS)
   accessModes:
     - ReadWriteOnce
   
-  # StorageClass for dynamic provisioning (EBS on AWS)
-  storageClassName: gp3
-  
+  storageClassName: ""
   # AWS EBS volume - update volumeID with your actual EBS volume ID
   awsElasticBlockStore:
     volumeID: vol-0bbf7d3ebb9b2faa3
