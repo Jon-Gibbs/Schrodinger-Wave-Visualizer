@@ -1,0 +1,78 @@
+===============================================================================
+DOCKER BUILD, TAG, AND PUSH COMMANDS FOR SCHRODINGER IMAGE
+===============================================================================
+
+IMPORTANT NOTES:
+- Your Mac is Intel (amd64) but EKS nodes are ARM64
+- ALWAYS use --platform linux/arm64 to build for the correct architecture
+- Run these commands from the workspace root: containerized-schrodinger-application/
+
+===============================================================================
+STEP 1: BUILD IMAGE FOR ARM64
+===============================================================================
+
+docker buildx build --platform linux/arm64 -t fortran-kubernetes:latest --load .
+
+Explanation:
+- docker buildx build: Multi-platform Docker builder
+- --platform linux/arm64: Build for ARM64 (EKS node architecture)
+- -t fortran-kubernetes:latest: Tag as "fortran-kubernetes:latest"
+- --load: Load image into local Docker daemon
+- .: Build from current directory (where Dockerfile is)
+
+===============================================================================
+STEP 2: TAG FOR ECR
+===============================================================================
+
+docker tag fortran-kubernetes:latest 037710112625.dkr.ecr.us-west-2.amazonaws.com/fortran-kubernetes:latest
+
+Explanation:
+- docker tag: Create an alias pointing to ECR repository
+- fortran-kubernetes:latest: Local image name
+- 037710112625.dkr.ecr.us-west-2.amazonaws.com/fortran-kubernetes:latest: ECR destination URI
+
+===============================================================================
+STEP 3: PUSH TO ECR
+===============================================================================
+
+docker push 037710112625.dkr.ecr.us-west-2.amazonaws.com/fortran-kubernetes:latest
+
+Explanation:
+- docker push: Upload image to ECR registry
+- Full ECR URI: 037710112625 (account ID), us-west-2 (region), fortran-kubernetes (repo name)
+
+===============================================================================
+ALL-IN-ONE COMMAND (RECOMMENDED)
+===============================================================================
+
+docker buildx build --platform linux/arm64 -t fortran-kubernetes:latest --load . && \
+docker tag fortran-kubernetes:latest 037710112625.dkr.ecr.us-west-2.amazonaws.com/fortran-kubernetes:latest && \
+docker push 037710112625.dkr.ecr.us-west-2.amazonaws.com/fortran-kubernetes:latest
+
+Explanation:
+- && chains the commands together
+- Runs all three steps sequentially
+- Stops if any step fails
+
+===============================================================================
+OPTIONAL: CHECK IF IMAGE EXISTS IN ECR
+===============================================================================
+
+aws ecr describe-images --repository-name fortran-kubernetes --region us-west-2
+
+Explanation:
+- Lists all images in the ECR repository
+- Verify your push was successful
+
+===============================================================================
+AFTER PUSHING: REDEPLOY KUBERNETES JOB
+===============================================================================
+
+kubectl delete job schrodinger-indexed-job && kubectl apply -f kubernetes/indexed-job.yaml
+
+Explanation:
+- Delete old job to avoid conflicts
+- && chains the delete with the new apply
+- Creates new job with fresh image pull from ECR
+
+===============================================================================
