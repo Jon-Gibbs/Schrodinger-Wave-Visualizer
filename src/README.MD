@@ -27,15 +27,15 @@ Provision an AWS EKS Cluster and orchestrate the workload to compute massive mat
 Requirements:
 Deploy a NodeGroup with at least 3 compute instances.
 Write and apply a Kubernetes Indexed Job YAML manifest configuring at least 10 completions and a parallelism factor of 5.
-<Not doing>Implement a Persistent Volume (PV) and Persistent Volume Claim (PVC), mounting it to the worker pods to simulate persistent storage of logs
 
 Deliverable 3:
 The EKS worker pods must stream their computed matrix chunks to a central broker so a client can assemble the final 3D wave.
 
 Requirements:
 Provision a public-facing Amazon EC2 instance.
-Install, configure, and secure a Redis Server on the EC2 instance to act as a Pub/Sub broker.
+Install, configure, and secure a Redis Server on the EC2 instance to act as a Pub/Sub broker and persistent storage of logs.
 Update the parallel_worker.py in your Docker container to serialize the matrix chunks to JSON and publish them to a Redis channel (e.g., wave_channel).
+Mak
 
 Deliverable 4:
 You cannot optimize what you cannot measure. Deploy the industry-standard observability stack to your EKS cluster.
