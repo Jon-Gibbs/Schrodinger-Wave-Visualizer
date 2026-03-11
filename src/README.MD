@@ -27,7 +27,7 @@ Provision an AWS EKS Cluster and orchestrate the workload to compute massive mat
 Requirements:
 Deploy a NodeGroup with at least 3 compute instances.
 Write and apply a Kubernetes Indexed Job YAML manifest configuring at least 10 completions and a parallelism factor of 5.
-<Not doing>Implement a Persistent Volume (PV) and Persistent Volume Claim (PVC), mounting it to the worker pods to simulate persistent storage of logs or result vectors.
+<Not doing>Implement a Persistent Volume (PV) and Persistent Volume Claim (PVC), mounting it to the worker pods to simulate persistent storage of logs
 
 Deliverable 3:
 The EKS worker pods must stream their computed matrix chunks to a central broker so a client can assemble the final 3D wave.
