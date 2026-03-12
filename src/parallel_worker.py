@@ -46,9 +46,14 @@ def main() -> None:
         mass,
     )
 
+    # Build payload with computed matrix
+    # Convert numpy array to list for JSON serialization
+    amplitude_list = amplitude.tolist()
+    
     payload = {
         "job_completion_index": job_index,
         "grid_size": grid_size,
+        "amplitude": amplitude_list,  # Full 64x64 matrix
         "min": float(amplitude.min()),
         "max": float(amplitude.max()),
         "mean": float(amplitude.mean()),
