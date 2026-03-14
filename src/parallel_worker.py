@@ -1,6 +1,6 @@
 import json
 import os
-
+import time
 import numpy as np
 import redis
 import schrodinger
@@ -72,7 +72,7 @@ def main() -> None:
     except Exception as e:
         print(f"Warning: Failed to publish to Redis: {e}")
         print("Continuing anyway (computed result printed above)")
-
+    time.sleep(10)  # Sleep briefly to ensure message is sent before container exits
 
 if __name__ == "__main__":
     main()

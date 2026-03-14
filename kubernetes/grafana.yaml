@@ -265,11 +265,11 @@ data:
           "pluginVersion": "8.0.0",
           "targets": [
             {
-              "expr": "sum(rate(container_cpu_usage_seconds_total{pod=~\"schrodinger.*\"}[5m])) by (pod)",
+              "expr": "kubelet_running_pods",
               "refId": "A"
             }
           ],
-          "title": "Pod CPU Usage (Worker Pods)",
+          "title": "Running Pods per Node",
           "type": "timeseries"
         },
         {
@@ -341,11 +341,11 @@ data:
           "pluginVersion": "8.0.0",
           "targets": [
             {
-              "expr": "sum(container_memory_usage_bytes{pod=~\"schrodinger.*\"}) by (pod)",
+              "expr": "kubelet_running_containers",
               "refId": "A"
             }
           ],
-          "title": "Pod Memory Usage (Worker Pods)",
+          "title": "Running Containers per Node",
           "type": "timeseries"
         },
         {
@@ -384,11 +384,11 @@ data:
           "pluginVersion": "8.0.0",
           "targets": [
             {
-              "expr": "count(kube_pod_status_phase{namespace=\"default\",phase=\"Running\"})",
+              "expr": "sum(kubelet_desired_pods)",
               "refId": "A"
             }
           ],
-          "title": "Running Pods",
+          "title": "Desired Pods",
           "type": "stat"
         },
         {
@@ -427,11 +427,11 @@ data:
           "pluginVersion": "8.0.0",
           "targets": [
             {
-              "expr": "count(kube_pod_status_phase{namespace=\"default\",phase=\"Succeeded\"})",
+              "expr": "sum(kubelet_active_pods)",
               "refId": "A"
             }
           ],
-          "title": "Completed Pods",
+          "title": "Active Pods",
           "type": "stat"
         }
       ],
