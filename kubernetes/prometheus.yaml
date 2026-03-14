@@ -1,0 +1,198 @@
+---
+# Kubernetes Service Account for Prometheus
+# Prometheus needs permission to query the Kubernetes API to discover pods/nodes
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: default
+
+---
+# ClusterRole: Defines what permissions Prometheus has in the cluster
+# Prometheus needs read access to nodes, pods, services, endpoints, etc.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+# Allow reading information about nodes
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - nodes/metrics
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+# Allow reading pod logs (for debugging)
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs: ["get"]
+# Allow reading metrics from metrics API
+- apiGroups: ["metrics.k8s.io"]
+  resources:
+  - nodes
+  - pods
+  verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding: Bind the ClusterRole to the ServiceAccount
+# This grants Prometheus the permissions defined in the ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: default
+
+---
+# Prometheus Deployment
+# Main application that scrapes and stores metrics
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: default
+  labels:
+    app: prometheus
+spec:
+  replicas: 1  # Single Prometheus instance (sufficient for this use case)
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+      annotations:
+        # Prometheus self-monitoring: this pod also exposes metrics
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Use the ServiceAccount we created (so Prometheus can access Kubernetes API)
+      serviceAccountName: prometheus
+      
+      # Run as unprivileged user for security
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+
+      containers:
+      - name: prometheus
+        # Official Prometheus image
+        image: prom/prometheus:latest
+        imagePullPolicy: IfNotPresent
+        
+        # Expose metrics port
+        ports:
+        - name: http
+          containerPort: 9090
+          protocol: TCP
+        
+        # Command: tell Prometheus where to find its config
+        args:
+        - "--config.file=/etc/prometheus/prometheus.yml"
+        - "--storage.tsdb.path=/prometheus"
+        - "--storage.tsdb.retention.time=24h"         # Keep metrics for 24 hours
+        - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+        - "--web.console.templates=/usr/share/prometheus/consoles"
+        - "--web.enable-lifecycle"                     # Allow reload via API
+        
+        # Resource requests (minimum guaranteed resources)
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        
+        # Health check: is Prometheus responding?
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        # Mount the ConfigMap as a volume
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus          # Where Prometheus reads its config
+          readOnly: true
+        - name: prometheus-storage
+          mountPath: /prometheus              # Where Prometheus stores data
+      
+      # Define volumes
+      volumes:
+      # ConfigMap: Prometheus configuration (from prometheus-config.yaml)
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      # EmptyDir: Temporary storage for time-series data
+      # (Note: Data is lost when pod restarts. For production, use PersistentVolume)
+      - name: prometheus-storage
+        emptyDir: {}
+
+---
+# Service: Internal access to Prometheus
+# Other pods (like Grafana) use this service to reach Prometheus
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+  namespace: default
+  labels:
+    app: prometheus
+spec:
+  type: ClusterIP  # Internal only (Grafana accesses via ClusterIP)
+  selector:
+    app: prometheus
+  ports:
+  - name: web
+    port: 9090           # Service port (internal)
+    targetPort: http     # Pod port
+    protocol: TCP
+
+---
+# (Optional) Expose Prometheus for debugging
+# Uncomment if you want to access Prometheus directly from your Mac
+# This allows: curl http://<ec2-ip>:30090/graph
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-external
+  namespace: default
+  labels:
+    app: prometheus
+spec:
+  type: NodePort
+  selector:
+    app: prometheus
+  ports:
+  - name: web
+    port: 9090
+    targetPort: http
+    nodePort: 30090  # Access Prometheus on port 30090
+    protocol: TCP
