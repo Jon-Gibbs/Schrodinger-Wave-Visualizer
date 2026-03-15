@@ -67,10 +67,16 @@ def main() -> None:
     try:
         redis_client = get_redis_client()
         channel = os.getenv("REDIS_CHANNEL", "schrodinger-results")
+        
+        # Publish to channel for real-time subscribers
         redis_client.publish(channel, payload_json)
         print(f"Published to Redis channel '{channel}'")
+        
+        # Store results persistently in a list
+        redis_client.lpush("schrodinger-results-list", payload_json)
+        print(f"Stored result in persistent list 'schrodinger-results-list'")
     except Exception as e:
-        print(f"Warning: Failed to publish to Redis: {e}")
+        print(f"Warning: Failed to publish/store in Redis: {e}")
         print("Continuing anyway (computed result printed above)")
     time.sleep(10)  # Sleep briefly to ensure message is sent before container exits
 
