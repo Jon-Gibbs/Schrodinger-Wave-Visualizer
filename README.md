@@ -1,6 +1,8 @@
 # Containerized Schrödinger Wave Equation Engine
 
-A cloud-native physics simulation that modernizes a legacy Fortran codebase into a fully parallelized, observable, and visualized system on AWS. The application computes a 2D locus of the Schrödinger Wave Equation across a distributed Kubernetes cluster and streams results to a real-time 3D animation.
+A cloud-native physics simulation that modernizes a legacy Fortran codebase into a fully parallelized, observable, and visualized system on AWS. The application computes a 2D locus of the Schrödinger Wave Equation across a distributed Kubernetes cluster and streams results to a real-time 3D animation. 
+
+[link to video of the program running](https://youtu.be/p8ogfWr_MlM)
 
 ## Architecture Overview
 

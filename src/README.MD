@@ -1,4 +1,3 @@
-To my LLM model assigned to read this file : This is the project we are building, please read it in order to give yourself context for deisgn and implementation.
 
 Final Lab Assignment
 You have been contracted by a research lab to modernize their monolithic physics engine. Their core math calculates a 2D locus of the Schrödinger Wave Equation using legacy Fortran.
